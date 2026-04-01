@@ -1,0 +1,724 @@
+---
+title: "Problem Set 2"
+subtitle: "Double Machine Learning"
+author: "HPM 883: Advanced Quantitative Methods"
+date: "Due: March 13, 2026"
+slug: "ps-2"
+categories: [Problem Set, DML, Causal Inference, Machine Learning]
+description: "Implement Double Machine Learning for causal inference with high-dimensional confounders, compare nuisance learners, and diagnose overlap."
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-tools: true
+editor: visual
+execute:
+  eval: false
+  echo: true
+---
+
+::: {.callout-important}
+## Accept the Assignment
+
+**[Click here to accept Problem Set 2 on GitHub Classroom](https://classroom.github.com/a/RNjb8MDT)**
+
+This will create your personal repository for this problem set.
+:::
+
+::: {.callout-note}
+## Getting Started
+
+After accepting the assignment above:
+
+1. **Clone your repo** — on your repo page, click the green **Code** button, copy the URL, then:
+
+   ```bash
+   git clone <your-repo-url>
+   cd problem-set-2-dml-<your-username>
+   ```
+
+2. **Open in your IDE** — open the folder in Positron (recommended), RStudio, or VS Code
+
+3. **Restore packages** — in the R console, run:
+
+   ```r
+   renv::restore()
+   ```
+
+   This installs the exact package versions needed (may take a few minutes the first time).
+
+4. **Start working** — open `ps-2-dml.qmd` and run chunks interactively
+
+See the [Computing Guide](../computing.qmd) for detailed instructions and troubleshooting.
+:::
+
+## Introduction
+
+The State Health Department has contracted you to evaluate the impact of **Medicaid expansion** on hospital utilization. The policy was implemented in 2020, and you have access to rich administrative claims data from 2019-2021 with 50+ potential confounders.
+
+### The Situation
+
+Dr. P-Hacker's initial analysis simply regressed hospital visits on Medicaid expansion status, controlling for age and gender:
+
+> "The coefficient on Medicaid is 0.8 additional visits per year (p < 0.001). Expansion clearly increases utilization!"
+
+Dr. Doub R. Obust, the department's methodologist, raises concerns:
+
+1. With 50+ confounders, traditional regression may overfit or suffer from model misspecification
+2. The treatment-outcome relationship may not be linear
+3. Standard errors assume correct model specification
+4. We need **doubly-robust** estimation that remains valid even if one of two models (propensity or outcome) is wrong
+
+Your task is to implement Double Machine Learning (DML) using the `DoubleML` package, compare nuisance learners, diagnose overlap violations, and provide robust policy conclusions.
+
+### Study Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Sample size | 10,000 individuals |
+| Treatment | Medicaid enrollment (binary) |
+| Outcome | Hospital visits in 2021 (count) |
+| Confounders | 50 variables (demographics, health status, SES) |
+| Pre-treatment outcome | Hospital visits in 2019 |
+| Treatment rate | ~35% enrolled in Medicaid |
+
+### Data
+
+Load the provided dataset:
+
+```{r}
+#| label: load-data
+#| eval: false
+
+# Load the Medicaid expansion data
+medicaid_data <- read.csv("data/ps-2-medicaid.csv")
+```
+
+```{r}
+#| label: setup
+#| eval: false
+
+library(DoubleML)
+library(mlr3)
+library(mlr3learners)
+library(data.table)
+library(ggplot2)
+library(ranger)
+library(cobalt)
+
+X_cols <- c(paste0("X", 1:50), "Y_pre")
+set.seed(883)
+```
+
+The dataset contains:
+
+- `Y`: Hospital visits in 2021 (outcome)
+- `D`: Medicaid enrollment (treatment, 1 = enrolled)
+- `Y_pre`: Hospital visits in 2019 (pre-treatment outcome)
+- `X1`-`X50`: Confounders (demographics, health conditions, SES indicators)
+
+::: {.callout-note}
+## Code Companion Available
+
+A **Code Companion** file (`ps-2-code-companion.qmd`) is provided alongside
+this problem set. It contains reusable code patterns for all the methods
+used in this assignment, demonstrated on a different dataset. Use it as a
+reference — you'll need to adapt the patterns to fit this problem set's data
+and questions.
+
+**If you get stuck on a computational task for more than 45 minutes:**
+look for the progressive hints embedded in each task (collapsed callouts below).
+See the Code Companion for code skeletons if you need more scaffolding.
+
+**Submission:** Source `.qmd` file is required. Rendered HTML is appreciated
+but not required — unrendered `.qmd` is accepted.
+:::
+
+---
+
+## Task 1: Conceptual Foundation (20 points)
+
+*No code required for this task. Write clear, technical explanations.*
+
+### 1.1 The Problem with Naive ML (8 points)
+
+a) **Regularization bias:** Explain why using a machine learning model (like Lasso) to directly predict $Y$ from $(D, X)$ and extracting the coefficient on $D$ produces biased treatment effect estimates. What is the source of this bias?
+
+::: {.callout-note}
+## Your Answer (1.1a)
+
+*Replace this with your response.*
+:::
+
+b) **Overfitting bias:** Why does using the same data to fit the ML model and estimate the treatment effect lead to overfitting bias? How does this affect inference (confidence intervals, p-values)?
+
+::: {.callout-note}
+## Your Answer (1.1b)
+
+*Replace this with your response.*
+:::
+
+### 1.2 The DML Solution (8 points)
+
+c) **Neyman orthogonality:** Explain the concept of Neyman orthogonality. Why does the partially linear model's orthogonal score function $\psi(W; \tau, \eta) = (Y - \ell(X) - \tau(D - m(X)))(D - m(X))$ satisfy this condition?
+
+::: {.callout-note}
+## Your Answer (1.2c)
+
+*Replace this with your response.*
+:::
+
+d) **Cross-fitting:** Describe the cross-fitting procedure. Why is sample splitting necessary, and why do we use K-fold cross-fitting rather than a single sample split?
+
+::: {.callout-note}
+## Your Answer (1.2d)
+
+*Replace this with your response.*
+:::
+
+### 1.3 Double Robustness (4 points)
+
+e) **AIPW property:** The Augmented Inverse Probability Weighting (AIPW) estimator is "doubly robust." Explain what this means in terms of which models can be misspecified while still obtaining consistent estimates.
+
+::: {.callout-note}
+## Your Answer (1.3e)
+
+*Replace this with your response.*
+:::
+
+---
+
+## Task 2: DML Implementation (30 points)
+
+Implement Double Machine Learning using the `DoubleML` package in R.
+
+**Packages:** `DoubleML`, `mlr3`, `mlr3learners`, `data.table`
+
+### 2.1 Partially Linear Model with Lasso (10 points)
+
+Estimate the Average Treatment Effect (ATE) using DML with:
+
+- Partially Linear Model (PLM) specification
+- Lasso (glmnet) for both nuisance functions ($\ell(X)$ and $m(X)$)
+- 5-fold cross-fitting
+- Partialling-out score
+
+Report:
+
+- Point estimate of ATE
+- 95% confidence interval
+- Standard error
+
+```{r}
+#| label: task-2-1-plr-lasso
+#| eval: true
+
+# Create DoubleML data backend
+
+# Create Lasso learners for both nuisance functions
+
+# Fit PLR with 5-fold cross-fitting
+
+# Report: ATE estimate, SE, 95% CI
+```
+
+::: {.callout-tip collapse="true"}
+## Hint: Getting Started (Tier 1)
+
+Use `DoubleMLPLR$new()` with `lrn("regr.cv_glmnet")` for both nuisance models.
+See Code Companion section **"Fitting a PLR Model"** for the full pattern.
+See the Code Companion for a code skeleton if you need more scaffolding.
+:::
+
+```{r}
+#| label: task-2-1-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-2-1-plr-results.png")
+```
+
+**Reflect:** How does your DML estimate compare to Dr. P-Hacker's naive estimate of 0.8? What explains the difference?
+
+::: {.callout-note}
+## Your Answer (2.1)
+
+*Replace this with your response.*
+:::
+
+### 2.2 Learner Comparison (10 points)
+
+Compare three different ML learners for the nuisance functions:
+
+1. **Lasso** (`regr.cv_glmnet` / `classif.cv_glmnet`)
+2. **Random Forest** (`regr.ranger` / `classif.ranger`)
+3. **Gradient Boosting** (`regr.xgboost` / `classif.xgboost`)
+
+For each learner combination:
+
+- Estimate the ATE using DML-PLM
+- Report point estimates and 95% CIs
+- Create a forest plot visualization comparing the estimates
+
+```{r}
+#| label: task-2-2-learner-comparison
+#| eval: true
+
+# Define learner pairs (Lasso, RF, XGBoost)
+
+# Loop over learner pairs and fit PLR for each
+
+# Collect results: Learner, Estimate, SE, CI_Lower, CI_Upper
+
+# Display comparison table
+```
+
+```{r}
+#| label: task-2-2-forest-plot
+#| eval: true
+#| fig-width: 8
+#| fig-height: 4
+
+# Create forest plot comparing learner estimates
+# Use ggplot + geom_pointrange
+```
+
+::: {.callout-tip collapse="true"}
+## Hint: Learner Comparison (Tier 1)
+
+Loop over three learner pairs (Lasso, RF, XGBoost), fit each with `DoubleMLPLR$new()`,
+extract `$coef` and `$confint()`, then combine into a data frame for plotting.
+See Code Companion section **"Comparing ML Learners"** and **"Creating a Forest Plot"**.
+See the Code Companion for a code skeleton if you need more scaffolding.
+:::
+
+```{r}
+#| label: task-2-2-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-2-2-forest-plot.png")
+```
+
+**Question:** How sensitive are your results to the choice of nuisance learner? What does this tell you about the data generating process?
+
+::: {.callout-note}
+## Your Answer (2.2)
+
+*Replace this with your response.*
+:::
+
+### 2.3 Interactive Regression Model (10 points)
+
+Now estimate the ATE using the **Interactive Regression Model (IRM)**, which allows for treatment effect heterogeneity:
+
+$$Y = g_0(D, X) + U, \quad E[U|X,D] = 0$$
+$$D = m_0(X) + V, \quad E[V|X] = 0$$
+
+```{r}
+#| label: task-2-3-irm
+#| eval: true
+
+# Create regression learner for outcome model
+
+# Create classification learner for treatment model (with predict_type = "prob")
+
+# Fit IRM with 5-fold cross-fitting, score = "ATE"
+
+# Report: ATE estimate, SE, 95% CI
+```
+
+::: {.callout-tip collapse="true"}
+## Hint: IRM Setup (Tier 1)
+
+Use `DoubleMLIRM$new()` with a **classification** learner for the treatment model.
+The key change from PLR: `lrn("classif.cv_glmnet", predict_type = "prob")`.
+See Code Companion section **"Fitting an IRM Model"**.
+See the Code Companion for a code skeleton if you need more scaffolding.
+:::
+
+```{r}
+#| label: task-2-3-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-2-3-irm-comparison.png")
+```
+
+**Question:** Compare the IRM estimate to the PLM estimate. Do they differ substantially? What might explain any differences?
+
+::: {.callout-note}
+## Your Answer (2.3)
+
+*Replace this with your response.*
+:::
+
+---
+
+## Task 3: Diagnostics (20 points)
+
+### 3.1 Propensity Score Overlap (15 points)
+
+Examine the propensity scores from your best-performing nuisance learner:
+
+```{r}
+#| label: task-3-1-propensity-setup
+#| eval: true
+
+# Fit a cross-validated propensity score model (e.g., ranger with probability = TRUE)
+
+# Store propensity scores for all observations using K-fold cross-fitting
+```
+
+a) **Histogram:** Create overlapping histograms of predicted propensity scores by treatment status. Are there regions of poor overlap?
+
+```{r}
+#| label: task-3-1a-propensity-histogram
+#| eval: true
+#| fig-width: 8
+#| fig-height: 5
+
+# Create overlapping histograms of propensity scores by treatment group
+```
+
+```{r}
+#| label: task-3-1a-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-3-1a-propensity-histogram.png")
+```
+
+::: {.callout-note}
+## Your Answer (3.1a)
+
+*Replace this with your response.*
+:::
+
+b) **Trimming:** Apply propensity score trimming (e.g., drop observations with $\hat{e}(X) < 0.05$ or $\hat{e}(X) > 0.95$). How many observations are dropped? How does the ATE estimate change?
+
+```{r}
+#| label: task-3-1b-trimming
+#| eval: true
+
+# Define trimming thresholds
+
+# Identify and count observations to drop
+
+# Re-fit DML on trimmed sample
+
+# Compare full-sample vs trimmed estimates
+```
+
+```{r}
+#| label: task-3-1b-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-3-1b-trimming-results.png")
+```
+
+::: {.callout-note}
+## Your Answer (3.1b)
+
+*Replace this with your response.*
+:::
+
+c) **Overlap weighting:** As an alternative to trimming, implement overlap weighting (weights = $\hat{e}(X)(1-\hat{e}(X))$). Compare to the trimmed estimate.
+
+```{r}
+#| label: task-3-1c-overlap-weights
+#| eval: true
+
+# Calculate overlap weights
+
+# Compute overlap-weighted ATE (Hajek estimator)
+
+# Compare to trimmed estimate
+```
+
+```{r}
+#| label: task-3-1c-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-3-1c-overlap-weights.png")
+```
+
+::: {.callout-note}
+## Your Answer (3.1c)
+
+*Replace this with your response.*
+:::
+
+d) **Dimensionality and overlap ([D'Amour et al. (2021)](https://doi.org/10.1016/j.jeconom.2020.06.003)):** Re-run your propensity score estimation using only the 10 most important covariates (based on variable importance from your best learner). Compare the propensity score distributions to those using all 50 covariates. Does the overlap improve? Relate your findings to D'Amour et al.'s theoretical result about the curse of dimensionality for overlap.
+
+```{r}
+#| label: task-3-1d-dimensionality
+#| eval: true
+#| fig-width: 8
+#| fig-height: 5
+
+# Extract variable importance from ranger model
+
+# Select top 10 covariates
+
+# Re-fit propensity model with reduced covariates
+
+# Compare propensity score distributions (all 50 vs top 10)
+```
+
+::: {.callout-tip collapse="true"}
+## Hint: Extracting Variable Importance (Tier 1)
+
+Fit a `ranger` model with `importance = "impurity"`, then use
+`sort(fit$variable.importance, decreasing = TRUE)` to rank covariates.
+See Code Companion section **"Extracting Propensity Scores"**.
+:::
+
+```{r}
+#| label: task-3-1d-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-3-1d-dimensionality.png")
+```
+
+::: {.callout-note}
+## Your Answer (3.1d)
+
+*Replace this with your response.*
+:::
+
+### 3.2 Covariate Balance (10 points)
+
+Using the `cobalt` package, assess covariate balance:
+
+a) **Unweighted balance:** Create a Love plot showing standardized mean differences before any adjustment.
+
+b) **IPW balance:** Create a Love plot after inverse probability weighting. Which covariates remain imbalanced?
+
+c) **Balance table:** Report a balance table with means, standardized differences, and variance ratios for the 10 most important covariates.
+
+```{r}
+#| label: task-3-2-love-plot
+#| eval: true
+#| fig-width: 8
+#| fig-height: 6
+
+# Calculate IPW weights from propensity scores
+
+# Create Love plot showing unadjusted and IPW-adjusted balance
+```
+
+```{r}
+#| label: task-3-2-balance-table
+#| eval: true
+
+# Generate balance table for top 10 covariates
+```
+
+::: {.callout-tip collapse="true"}
+## Hint: cobalt Package (Tier 1)
+
+Use `love.plot()` with `un = TRUE` to show before/after in one plot.
+See Code Companion section **"Covariate Balance with cobalt"**.
+:::
+
+```{r}
+#| label: task-3-2-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-3-2-love-plot.png")
+```
+
+**Question (3.2b):** Which covariates remain imbalanced after IPW? What are the implications for your causal estimates?
+
+::: {.callout-note}
+## Your Answer (3.2b)
+
+*Replace this with your response.*
+:::
+
+---
+
+## Task 4: AIPW Implementation (15 points)
+
+### 4.1 Manual AIPW (10 points)
+
+Implement the AIPW estimator **manually** (without using DoubleML's built-in AIPW):
+
+$$\hat{\tau}_{AIPW} = \frac{1}{n}\sum_{i=1}^{n} \left[ \hat{\mu}_1(X_i) - \hat{\mu}_0(X_i) + \frac{D_i(Y_i - \hat{\mu}_1(X_i))}{\hat{e}(X_i)} - \frac{(1-D_i)(Y_i - \hat{\mu}_0(X_i))}{1-\hat{e}(X_i)} \right]$$
+
+Where:
+
+- $\hat{\mu}_1(X)$ = predicted outcome under treatment
+- $\hat{\mu}_0(X)$ = predicted outcome under control
+- $\hat{e}(X)$ = predicted propensity score
+
+Use cross-fitting for all nuisance estimates. Report the AIPW estimate and standard error (using influence function variance).
+
+```{r}
+#| label: task-4-1-manual-aipw
+#| eval: true
+
+# Set up K-fold cross-fitting
+
+# For each fold:
+#   - Fit outcome model on treated observations (training folds)
+#   - Fit outcome model on control observations (training folds)
+#   - Fit propensity model on all training observations
+#   - Predict on held-out fold
+
+# Clip propensity scores to avoid division by zero
+
+# Compute AIPW influence function values
+
+# Calculate: ATE estimate, SE (influence function variance), 95% CI
+```
+
+::: {.callout-tip collapse="true"}
+## Hint: AIPW Structure (Tier 1)
+
+Break into 3 steps: (1) predict outcomes by treatment status ($\hat{\mu}_1$, $\hat{\mu}_0$),
+(2) predict propensity scores ($\hat{e}$), (3) plug into AIPW formula.
+Use a K-fold loop where you train on K-1 folds and predict on the held-out fold.
+See Code Companion section **"Manual AIPW Estimator"**.
+See the Code Companion for a code skeleton if you need more scaffolding.
+:::
+
+```{r}
+#| label: task-4-1-fallback
+#| eval: false
+
+# UNCOMMENT below ONLY if you could not get your code to run.
+# Include: (1) your attempted code, (2) the error, (3) what you think went wrong.
+# knitr::include_graphics("fallback/task-4-1-aipw-results.png")
+```
+
+### 4.2 Comparison (5 points)
+
+Compare your manual AIPW estimate to:
+
+- The DoubleML PLM estimate
+- The DoubleML IRM estimate
+
+```{r}
+#| label: task-4-2-comparison
+#| eval: true
+
+# Create comparison table of all estimates:
+# Method, Estimate, SE, CI_Lower, CI_Upper
+```
+
+**Question:** Do the estimates agree? Explain any discrepancies.
+
+::: {.callout-note}
+## Your Answer (4.2)
+
+*Replace this with your response.*
+:::
+
+---
+
+## Task 5: Policy Memo (15 points)
+
+Write a 400-500 word policy memo for the State Health Department Commissioner. Your memo should:
+
+1. **State the research question** clearly for a policy audience
+
+2. **Present the main finding** with appropriate uncertainty quantification:
+   - What is the estimated effect of Medicaid expansion on hospital utilization?
+   - How confident should the Commissioner be in this estimate?
+
+3. **Address robustness:**
+   - How sensitive are results to analytical choices?
+   - What are the key assumptions, and how plausible are they?
+
+4. **Provide policy implications:**
+   - What does this mean for the department's planning?
+   - What additional analyses or data would strengthen conclusions?
+
+Use appropriate language for a government policy audience. Avoid technical jargon. Focus on decisions and implications.
+
+---
+
+## Submission Requirements
+
+Push to your GitHub Classroom repository by **March 13, 2026 at 11:59 PM**:
+
+1. **Source .qmd file** (required)
+2. **Rendered HTML** of your completed .qmd file (if possible — unrendered `.qmd` accepted)
+
+Your submission should include:
+
+- All code with `eval: true` so results are visible (if rendering)
+- Clear written answers to conceptual questions
+- Well-formatted tables and visualizations
+- The policy memo as a separate section
+
+::: {.callout-note}
+## If Using Fallback Outputs
+
+If you used any fallback outputs, uncomment the relevant `knitr::include_graphics()` line in the fallback code block for that task. Your submission must also include:
+
+- Your attempted code (even if it didn't run)
+- The error message you encountered
+- A brief explanation of what you think went wrong
+:::
+
+
+---
+
+## Evaluation Criteria
+
+| Component | Points | Criteria |
+|-----------|--------|----------|
+| Task 1: Conceptual | 20 | Accurate explanations of DML theory |
+| Task 2: Implementation | 30 | Correct DML implementation, learner comparison |
+| Task 3: Diagnostics | 25 | Proper overlap and balance assessment |
+| Task 4: AIPW | 15 | Correct manual implementation |
+| Task 5: Communication | 15 | Clear, policy-appropriate, actionable |
+
+---
+
+## Hints
+
+- Start with the [DoubleML Getting Started](https://docs.doubleml.org/stable/guide/basics.html) vignette
+- Use `mlr3::lrn()` to create learners; `mlr3learners` provides Lasso, RF, XGBoost
+- For propensity scores, remember to specify `classif.` learners for the treatment model
+- The `cobalt` package's `bal.tab()` and `love.plot()` functions are useful for balance diagnostics
+- For influence function variance of AIPW, the variance is $\frac{1}{n} Var(\hat{\psi}_i)$ where $\hat{\psi}_i$ is the individual-level influence function value
+
+---
+
+## References
+
+- Chernozhukov, V., Chetverikov, D., Demirer, M., Duflo, E., Hansen, C., Newey, W., & Robins, J. (2018). Double/debiased machine learning for treatment and structural parameters. *The Econometrics Journal*, 21(1), C1-C68. [DOI](https://doi.org/10.1111/ectj.12097)
+
+- Chernozhukov, V., Hansen, C., Kallus, N., Spindler, M., & Syrgkanis, V. (2025). *Applied Causal Inference Powered by ML and AI*. [Link](https://causalml-book.org/)
+
+- D'Amour, A., Ding, P., Feller, A., Lei, L., & Sekhon, J. (2021). Overlap in observational studies with high-dimensional covariates. *Journal of Econometrics*, 221(2), 644-654. [DOI](https://doi.org/10.1016/j.jeconom.2020.06.003)
+
+---
+
+## Key Formulas
+
+**Partially Linear Model (PLM):**
+$$Y = D\tau + g_0(X) + U, \quad E[U|D,X] = 0$$
+$$D = m_0(X) + V, \quad E[V|X] = 0$$
+
+**DML Orthogonal Score (Partialling Out):**
+$$\psi(W; \tau, \eta) = (Y - \ell_0(X) - \tau(D - m_0(X)))(D - m_0(X))$$
+
+**AIPW Estimator:**
+$$\hat{\tau}_{AIPW} = \frac{1}{n}\sum_{i=1}^{n} \left[ \hat{\mu}_1(X_i) - \hat{\mu}_0(X_i) + \frac{D_i(Y_i - \hat{\mu}_1(X_i))}{\hat{e}(X_i)} - \frac{(1-D_i)(Y_i - \hat{\mu}_0(X_i))}{1-\hat{e}(X_i)} \right]$$
